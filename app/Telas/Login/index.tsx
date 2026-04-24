@@ -13,6 +13,7 @@ import {
 
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { styles } from "./style";
@@ -20,6 +21,7 @@ import { styles } from "./style";
 const logoSenac = require("../../../assets/images/logo_senac_branca.png");
 
 export default function LoginScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,6 +29,9 @@ export default function LoginScreen() {
 
   const handleLogin = () => {
     console.log("Login:", { email, password });
+    // Navega para o Dashboard e remove a tela de login do histórico
+    // (impede voltar para o login pelo botão voltar)
+    router.replace("/Telas/Dashboard");
   };
 
   return (

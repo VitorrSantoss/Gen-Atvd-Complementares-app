@@ -15,12 +15,34 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import SideDrawer from "../../../app/componentes/SideDrawer";
+import { useCurrentUser } from "../../../app/hooks/useCurrentUser";
 import { useDrawerNavigation } from "../../../app/hooks/userDrawerNavigation";
+import {
+  HistoricoSubmissao,
+  StatusSubmissao,
+  historicoService,
+} from "../../../services/historicoService";
 import { styles } from "./style";
 
-// ─── Tipos ───────────────────────────────────────────────
-
-type StatusSubmissao = "PENDENTE" | "APROVADA" | "REPROVADA";
+// ─────────────────────────────────────────────────────────────────────────────
+// Tela: Histórico de Submissões (mobile / perfil ALUNO)
+//
+// Objetivo:
+//   Mostrar ao usuário autenticado a lista de submissões de atividades
+//   complementares (próprias quando ALUNO, do curso quando COORDENADOR, todas
+//   quando SUPER_ADMIN), com filtros por status e modal de detalhes com os
+//   certificados anexados.
+//
+// Como chega aqui:
+//   - Drawer lateral → item "Histórico" (SideDrawer)
+//   - useDrawerNavigation mapeia a chave "historico" → /Telas/HistoricoSubmissoes
+//     (ver app/hooks/userDrawerNavigation.ts)
+//
+// Fonte de dados:
+//   - historicoService.listar() → GET /submissoes/historico
+//   - JWT injetado automaticamente pelo interceptor de lib/api.ts
+//   - Filtro por usuário/perfil é feito no back-end
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface CertificadoDTO {
   id: number;
@@ -28,85 +50,8 @@ interface CertificadoDTO {
   urlArquivo: string;
 }
 
-interface HistoricoSubmissao {
-  id: number;
-  identificacao: string;
-  tipo: string;
-  dataSubmissao: string;
-  alunoNome: string;
-  cursoNome: string;
-  status: StatusSubmissao;
-  quantidadeRegistros: number;
-  observacao?: string | null;
-  certificados: CertificadoDTO[];
-}
-
+/** Conjunto possível de filtros da barra superior. "TODAS" desliga o filtro. */
 type Filtro = "TODAS" | StatusSubmissao;
-
-const currentUser = {
-  name: "Vitor Shampo",
-  email: "vitorshampo@gmail.com",
-};
-
-const API_BASE =
-  (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
-  "http://localhost:8080";
-
-const MOCK_DATA: HistoricoSubmissao[] = [
-  {
-    id: 12,
-    identificacao: "Engenharia de Software — Submissão #12",
-    tipo: "Atividade Complementar",
-    dataSubmissao: "2026-02-15T10:32:00",
-    alunoNome: "Vitor Shampo",
-    cursoNome: "Engenharia de Software",
-    status: "PENDENTE",
-    quantidadeRegistros: 1,
-    observacao: null,
-    certificados: [{ id: 22, nomeArquivo: "seminario-ia.pdf", urlArquivo: "" }],
-  },
-  {
-    id: 9,
-    identificacao: "Engenharia de Software — Submissão #9",
-    tipo: "Atividade Complementar",
-    dataSubmissao: "2026-01-20T14:05:00",
-    alunoNome: "Vitor Shampo",
-    cursoNome: "Engenharia de Software",
-    status: "APROVADA",
-    quantidadeRegistros: 2,
-    observacao: "Avaliada por Ana Coordenadora",
-    certificados: [
-      { id: 18, nomeArquivo: "projeto-social.pdf", urlArquivo: "" },
-      { id: 19, nomeArquivo: "comprovante-presenca.jpg", urlArquivo: "" },
-    ],
-  },
-  {
-    id: 7,
-    identificacao: "Engenharia de Software — Submissão #7",
-    tipo: "Atividade Complementar",
-    dataSubmissao: "2025-12-10T09:14:00",
-    alunoNome: "Vitor Shampo",
-    cursoNome: "Engenharia de Software",
-    status: "APROVADA",
-    quantidadeRegistros: 1,
-    observacao: "Avaliada por Ana Coordenadora",
-    certificados: [
-      { id: 15, nomeArquivo: "monitoria-calculo.pdf", urlArquivo: "" },
-    ],
-  },
-  {
-    id: 5,
-    identificacao: "Engenharia de Software — Submissão #5",
-    tipo: "Atividade Complementar",
-    dataSubmissao: "2026-01-05T08:22:00",
-    alunoNome: "Vitor Shampo",
-    cursoNome: "Engenharia de Software",
-    status: "REPROVADA",
-    quantidadeRegistros: 1,
-    observacao: "Avaliada por Ana Coordenadora",
-    certificados: [{ id: 11, nomeArquivo: "grupo-teatro.jpg", urlArquivo: "" }],
-  },
-];
 
 const statusColors: Record<StatusSubmissao, { bg: string; color: string }> = {
   PENDENTE: { bg: "#FEF3C7", color: "#B45309" },
@@ -144,9 +89,21 @@ function StatusBadge({ status }: { status: StatusSubmissao }) {
 
 export default function HistoricoSubmissoesScreen() {
   const insets = useSafeAreaInsets();
+
+  // Usuário autenticado: alimenta o cabeçalho do drawer. Substitui o
+  // `currentUser` hardcoded que existia antes (sempre "Vitor Shampo").
+  const currentUser = useCurrentUser();
+
   const { drawerOpen, openDrawer, closeDrawer, handleSelect, handleLogout } =
     useDrawerNavigation("historico");
 
+  // ─── Estado da tela ────────────────────────────────────────────────────
+  // items:       lista bruta retornada pelo servidor (ordenada por data desc)
+  // loading:     true na 1ª carga (spinner de tela cheia)
+  // refreshing:  true durante pull-to-refresh (indicador no topo do FlatList)
+  // error:       mensagem para o usuário em caso de falha
+  // filtro:      filtro de status aplicado ao renderizar (sem nova requisição)
+  // selecionada: submissão clicada — abre o Modal com detalhes
   const [items, setItems] = useState<HistoricoSubmissao[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -156,33 +113,55 @@ export default function HistoricoSubmissoesScreen() {
     null,
   );
 
+  /**
+   * Busca o histórico no back-end via historicoService (axios + JWT).
+   *
+   * @param showLoading se true, mostra spinner cheio de tela (carga inicial).
+   *                    Em pull-to-refresh passamos false, pois o indicador é
+   *                    o RefreshControl do FlatList.
+   *
+   * Em caso de erro, mostra o estado de erro real (com botão "Tentar
+   * novamente"), sem MOCK_DATA — o usuário enxerga a verdade.
+   */
   const carregar = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     setError(null);
 
     try {
-      const resp = await fetch(`${API_BASE}/submissoes/historico`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data: HistoricoSubmissao[] = await resp.json();
-      setItems(Array.isArray(data) ? data : []);
-    } catch {
-      // Fallback de exibição enquanto a integração JWT não está habilitada no app
-      setItems(MOCK_DATA);
+      const data = await historicoService.listar();
+      setItems(data);
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.erro ??
+        err?.response?.data?.message ??
+        err?.message ??
+        "Falha ao carregar histórico.";
+      setError(typeof msg === "string" ? msg : "Erro desconhecido");
+      setItems([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
+  // Carga inicial ao montar a tela.
   useEffect(() => {
     carregar(true);
   }, [carregar]);
 
+  /**
+   * Pull-to-refresh: chamado ao puxar o FlatList para baixo.
+   * Usa showLoading=false para NÃO esconder a lista durante a atualização.
+   */
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     carregar(false);
   }, [carregar]);
 
+  /**
+   * Aplica o filtro de status apenas na renderização — não refaz a requisição.
+   * Recomputa só quando `items` ou `filtro` mudam.
+   */
   const filtrados = useMemo(() => {
     if (filtro === "TODAS") return items;
     return items.filter((i) => i.status === filtro);
@@ -237,6 +216,12 @@ export default function HistoricoSubmissoesScreen() {
     </View>
   );
 
+  /**
+   * Conteúdo exibido quando a lista está vazia. Renderiza 3 cenários:
+   *   - loading: spinner + texto "Carregando histórico..."
+   *   - error:   ícone vermelho + botão "Tentar novamente"
+   *   - vazio:   ícone neutro + mensagem "Nenhuma submissão por aqui"
+   */
   const renderEmpty = () => {
     if (loading) {
       return (
@@ -414,7 +399,7 @@ export default function HistoricoSubmissoesScreen() {
                       <Text style={styles.modalSectionTitle}>
                         Certificados anexados
                       </Text>
-                      {selecionada.certificados.map((c) => (
+                      {selecionada.certificados.map((c: CertificadoDTO) => (
                         <View key={c.id} style={styles.certificadoItem}>
                           <Ionicons
                             name="document-attach-outline"

@@ -18,8 +18,33 @@ import SideDrawer from "../../../app/componentes/SideDrawer";
 import { useDrawerNavigation } from "../../../app/hooks/userDrawerNavigation";
 import { styles } from "./style";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tela: Histórico de Submissões (mobile / perfil ALUNO)
+//
+// Objetivo:
+//   Mostrar ao aluno autenticado todas as submissões de atividades complementares
+//   que ele já enviou, com filtros por status (Todas/Pendentes/Aprovadas/Reprovadas)
+//   e modal de detalhes contendo certificados anexados.
+//
+// Como chega aqui:
+//   - Drawer lateral → item "Histórico" (SideDrawer)
+//   - useDrawerNavigation mapeia a chave "historico" → /Telas/HistoricoSubmissoes
+//     (ver app/hooks/userDrawerNavigation.ts)
+//
+// IMPORTANTE — pontos a melhorar (ver issues técnicas no PR de docs):
+//   1. A chamada usa fetch() puro, sem o JWT do AsyncStorage. Deveria usar o
+//      cliente axios de `lib/api.ts` que já injeta Authorization automaticamente.
+//   2. Há um fallback para MOCK_DATA quando o fetch falha. Isso "esconde" o
+//      erro real e exibe submissões fictícias, dando falsa impressão de OK.
+//   3. `currentUser` está hardcoded. O ideal é usar useCurrentUser()/useAuth()
+//      como no Dashboard.
+//   4. O endpoint /submissoes/historico ainda NÃO existe no back-end — por isso
+//      hoje a tela cai sempre no fallback de MOCK_DATA.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ─── Tipos ───────────────────────────────────────────────
 
+/** Status possíveis de uma submissão (espelha o enum do back). */
 type StatusSubmissao = "PENDENTE" | "APROVADA" | "REPROVADA";
 
 interface CertificadoDTO {
@@ -43,11 +68,25 @@ interface HistoricoSubmissao {
 
 type Filtro = "TODAS" | StatusSubmissao;
 
+/**
+ * Usuário exibido no cabeçalho do drawer.
+ * TODO (débito técnico): trocar por hook useCurrentUser() ou useAuth() para
+ * refletir o usuário realmente logado. Hoje está hardcoded e o drawer mostra
+ * "Vitor Shampo" mesmo quando outro aluno estiver autenticado.
+ */
 const currentUser = {
   name: "Vitor Shampo",
   email: "vitorshampo@gmail.com",
 };
 
+/**
+ * URL base do back-end. Lê de EXPO_PUBLIC_API_URL (.env) e, se não houver,
+ * cai em localhost (útil para desenvolvimento direto pelo simulador).
+ *
+ * Observação: a tela usa essa constante diretamente com fetch(). O ideal é
+ * migrar para o cliente axios já configurado em lib/api.ts, que injeta o
+ * JWT do AsyncStorage automaticamente.
+ */
 const API_BASE =
   (process.env.EXPO_PUBLIC_API_URL as string | undefined) ??
   "http://localhost:8080";
@@ -147,6 +186,13 @@ export default function HistoricoSubmissoesScreen() {
   const { drawerOpen, openDrawer, closeDrawer, handleSelect, handleLogout } =
     useDrawerNavigation("historico");
 
+  // ─── Estado da tela ────────────────────────────────────────────────────
+  // items:       lista bruta retornada pelo servidor
+  // loading:     true na 1ª carga (spinner de tela cheia)
+  // refreshing:  true durante pull-to-refresh (indicador no topo do FlatList)
+  // error:       mensagem para o usuário em caso de falha
+  // filtro:      filtro de status aplicado ao renderizar (sem nova requisição)
+  // selecionada: submissão clicada — abre o Modal com detalhes
   const [items, setItems] = useState<HistoricoSubmissao[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -156,6 +202,22 @@ export default function HistoricoSubmissoesScreen() {
     null,
   );
 
+  /**
+   * Busca o histórico no back-end.
+   *
+   * @param showLoading se true, mostra spinner cheio de tela (carga inicial).
+   *                    Em pull-to-refresh passamos false, pois o indicador é
+   *                    o RefreshControl do FlatList.
+   *
+   * ATENÇÃO — débito técnico identificado:
+   *   - Esta função usa fetch() puro, sem o JWT. Por isso, mesmo se o
+   *     endpoint existisse, ela receberia 403 (sem auth).
+   *   - O catch substitui o erro por MOCK_DATA, escondendo o problema do
+   *     usuário. O correto é mostrar o estado de erro (já temos `error` no
+   *     state, basta usá-lo).
+   *   - A migração futura é: trocar fetch() por `api.get('/submissoes/historico')`
+   *     usando o axios de lib/api.ts (com JWT) e remover o fallback de MOCK.
+   */
   const carregar = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
     setError(null);
@@ -174,15 +236,24 @@ export default function HistoricoSubmissoesScreen() {
     }
   }, []);
 
+  // Carga inicial ao montar a tela.
   useEffect(() => {
     carregar(true);
   }, [carregar]);
 
+  /**
+   * Pull-to-refresh: chamado ao puxar o FlatList para baixo.
+   * Usa showLoading=false para NÃO esconder a lista durante a atualização.
+   */
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     carregar(false);
   }, [carregar]);
 
+  /**
+   * Aplica o filtro de status apenas na renderização — não refaz a requisição.
+   * Recomputa só quando `items` ou `filtro` mudam.
+   */
   const filtrados = useMemo(() => {
     if (filtro === "TODAS") return items;
     return items.filter((i) => i.status === filtro);

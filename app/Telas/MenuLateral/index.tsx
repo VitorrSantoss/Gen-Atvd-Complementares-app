@@ -65,6 +65,7 @@ interface MenuItem {
 /**
  * Lista fixa dos itens do menu, na ordem em que aparecem.
  * Para adicionar/remover uma opção, basta editar este array (e a MenuItemKey).
+ é um array de objetos criado em TypeScript para estruturar os itens que vão aparecer no seu menu de navegação 
  */
 const MENU_ITEMS: MenuItem[] = [
   { key: "dashboard", label: "Dashboard", icon: "grid-outline" },
@@ -96,6 +97,8 @@ interface SideDrawerProps {
   onSelect: (item: MenuItemKey) => void;
   onLogout: () => void;
 }
+
+// Vai receber as propriedades o componente recebe aquelas propriedadesanteriormente e as desestrutura para usá-las dentro da lógica do menu lateral.
 
 export default function SideDrawer({
   visible,
